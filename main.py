@@ -5,36 +5,19 @@ import requests
 import subprocess
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import boto3
-from google.cloud import secretmanager
 
+from secretsmanager import get_secret
+from bucket import s3_client
 from logger import logger
 
 origins = [
     "http://localhost:4200",
     ]
 
-PROJECT_ID = "378193426299"
 OPENAPI_KEY_SECRET_ID = "OPENAI_API_KEY"
-S3_URL_SECRET_ID = "S3_URL"
-S3_ACCESS_KEY_SECRET_ID = "S3_ACCESS_KEY"
-S3_SECRET_KEY_SECRET_ID = "S3_SECRET_KEY"
-SECRET_VERSION = "latest"
+
 REGION = "eu-central-1"
 BUCKET_NAME = "page-builder"
-
-# Create GCP Secrets Manager client
-secrets_manager_client = secretmanager.SecretManagerServiceClient()
-
-def get_secret(secrets_id: str) -> str:
-    """
-    Holt das Secret aus GCP Secret Manager.
-    """
-    name = f"projects/{PROJECT_ID}/secrets/{secrets_id}/versions/{SECRET_VERSION}"
-    logger.info("Getting %s from Secrets Manager", secrets_id)
-    response = secrets_manager_client.access_secret_version(request={"name": name})
-    secret_value = response.payload.data.decode("UTF-8")
-    return secret_value
 
 # Create OpenAPI client
 openapi_client = OpenAI(api_key=get_secret(OPENAPI_KEY_SECRET_ID))
@@ -58,7 +41,7 @@ class InputData(BaseModel):
     input: str
 
 @app.post("/generate-content", tags=["Data Submission"])
-def submit_data(data: InputData):
+def submit_data(data: InputData) -> str:
     """
     Define a POST endpoint that accepts the JSON object
     """
@@ -70,11 +53,11 @@ def submit_data(data: InputData):
     return response.output_text
 
 @app.post("/publish-website/{uid}")
-def publish_website(uid: str):
+def publish_website(uid: str) -> str:
     """
     Publish users website to HA's self-hosted S3 bucket
     """
-    def get_website_url(uid: str):
+    def get_website_url(uid: str) -> str:
         """ generate the website url given an uid """
         return f"https://s3.z1storage.com/page-builder/{uid}.html"
 
@@ -96,15 +79,7 @@ def publish_website(uid: str):
         logger.error("Build failed: %s", e.stderr.decode())
         return
 
-    # Creating S3 boto client
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=get_secret(S3_URL_SECRET_ID),
-        aws_access_key_id=get_secret(S3_ACCESS_KEY_SECRET_ID),
-        aws_secret_access_key=get_secret(S3_SECRET_KEY_SECRET_ID),
-        region_name='default',)
-
-    url = s3_client.generate_presigned_url(
+    presigned_url = s3_client.generate_presigned_url(
         ClientMethod="put_object",
         Params={"Bucket": BUCKET_NAME, "Key": uid+".html", "ContentType": "text/html"},
         ExpiresIn=60
@@ -115,7 +90,7 @@ def publish_website(uid: str):
         content = f.read()
     logger.info("Uploading html file for uid %s to bucket %s", uid, BUCKET_NAME)
     response = requests.put(
-        url,
+        url=presigned_url,
         data=content,
         headers={"Content-Type": "text/html"},
         timeout=(5, 30))
@@ -130,7 +105,7 @@ def publish_website(uid: str):
         ACL='public-read'
     )
 
-    url = get_website_url(uid)
-    logger.info("Loading website to bucket succeeded, URL: %s", url)
+    website_url = get_website_url(uid)
+    logger.info("Loading website to bucket succeeded, URL: %s", website_url)
 
-    return url
+    return website_url
