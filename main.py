@@ -38,6 +38,7 @@ class InputData(BaseModel):
     """
     Define the schema for the expected input using Pydantic
     """
+    instructions: str
     input: str
 
 @app.post("/generate-content", tags=["Data Submission"])
@@ -47,7 +48,7 @@ def submit_data(data: InputData) -> str:
     """
     response = openapi_client.responses.create(
         model="gpt-5",
-        instructions='Use the input as a description for a website with one hero section and one feature section containing three features. Generate a title and a subtitle for the hero section and a title for the feature section. Also, generate titles and descriptions for each of the three features. Return the response in the following JSON format where null should be replaced by your generated content: "{\"hero\":{\"title\":null,\"subtitle\":null},\"features\":{\"title\":null,\"feature1\":{\"title\":null,\"description\":null},\"feature2\":{\"title\":null,\"description\":null},\"feature3\":{\"title\":null,\"description\":null}}}"',
+        instructions=data.instructions,
         input=data.input,
     )
     return response.output_text
