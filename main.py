@@ -1,10 +1,16 @@
 """ entry point to BA API to handle requests to openapi as well as pre-rendering """
 from openai import OpenAI
+from fastapi import FastAPI, Depends, Request, HTTPException
 from pydantic import BaseModel
 import requests
 import subprocess
-from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import firebase_admin
+from firebase_admin import auth, credentials
+
+if not firebase_admin._apps:
+    cred = credentials.ApplicationDefault()
+    firebase_admin.initialize_app(cred)
 
 from secretsmanager import get_secret
 from bucket import s3_client
@@ -41,20 +47,33 @@ class InputData(BaseModel):
     instructions: str
     input: str
 
+
+async def verify_token(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer"):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    
+    token = auth_header.split("Bearer ")[1]
+    try: 
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+    
+
+# Define a POST endpoint that accepts the JSON object
 @app.post("/generate-content", tags=["Data Submission"])
-def submit_data(data: InputData) -> str:
-    """
-    Define a POST endpoint that accepts the JSON object
-    """
-    response = openapi_client.responses.create(
+def submit_data(data: InputData, user=Depends(verify_token)):
+    response = client.responses.create(
         model="gpt-5",
         instructions=data.instructions,
         input=data.input,
     )
     return response.output_text
 
+
 @app.post("/publish-website/{uid}")
-def publish_website(uid: str) -> str:
+def publish_website(uid: str, user=Depends(verify_token)) -> str:
     """
     Publish users website to HA's self-hosted S3 bucket
     """
